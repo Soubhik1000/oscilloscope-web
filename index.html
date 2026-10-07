@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Web Oscilloscope</title>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      background: #111;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+
+    h1 {
+      margin-top: 0;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 15px;
+      align-items: center;
+    }
+
+    button,
+    select {
+      background: #222;
+      color: white;
+      border: 1px solid #555;
+      padding: 8px 12px;
+      border-radius: 5px;
+      font-size: 14px;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #333;
+    }
+
+    #scope {
+      width: 100%;
+      max-width: 1000px;
+      height: 500px;
+      background: #050505;
+      border: 1px solid #444;
+      display: block;
+    }
+
+    #value {
+      margin-top: 10px;
+      font-family: monospace;
+      color: #00ff88;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>Web Oscilloscope</h1>
+
+  <div class="controls">
+
+    <button id="connect">
+      Connect Nano
+    </button>
+
+    <button id="pause">
+      Pause
+    </button>
+
+    <label>
+      Time/Div:
+      <select id="timeDiv">
+        <option value="50">50 ms</option>
+        <option value="20" selected>20 ms</option>
+        <option value="10">10 ms</option>
+        <option value="5">5 ms</option>
+        <option value="2">2 ms</option>
+        <option value="1">1 ms</option>
+      </select>
+    </label>
+
+    <label>
+      Volts/Div:
+      <select id="voltsDiv">
+        <option value="0.5">0.5 V</option>
+        <option value="1" selected>1 V</option>
+        <option value="2">2 V</option>
+        <option value="2.5">2.5 V</option>
+        <option value="5">5 V</option>
+      </select>
+    </label>
+
+  </div>
+
+  <canvas id="scope" width="1000" height="500"></canvas>
+
+  <div id="value">
+    ADC: 0 | Voltage: 0.000 V
+  </div>
+
+  <script src="scope.js"></script>
+
+</body>
+</html>
