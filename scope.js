@@ -9,6 +9,11 @@ const ctx = canvas.getContext("2d");
 
 const valueDisplay = document.getElementById("value");
 
+const streamButton = document.getElementById("stream");
+const disconnectButton = document.getElementById("disconnect");
+
+let writer = null;
+let streaming = false;
 
 // =========================
 // Serial
@@ -45,9 +50,18 @@ let sampleCount = 0;
 // Display buffer
 // =========================
 
-let displaySamples = [];
+// let captureBuffer = new Array(MAX_SAMPLES);
+let captureBuffer = new Uint16Array(MAX_SAMPLES);
+let displaySamples = new Uint16Array(MAX_SAMPLES);
+const decoder = new TextDecoder();
+
+let captureCount = 0;
+
+// let displaySamples = [];
 
 let sweepReady = false;
+
+const SAMPLE_RATE = 500;
 
 
 // =========================
@@ -55,6 +69,23 @@ let sweepReady = false;
 // =========================
 
 let totalADC = 0;
+
+// =========================
+// Analog front-end calibration
+// =========================
+
+const ADC_REFERENCE = 5.0;
+const ADC_MAX = 1023;
+
+let ZERO_BIAS = 1.618;
+const INPUT_SCALE = 21.0;
+
+function adcToInputVoltage(adc) {
+    const adcVoltage =
+        adc * ADC_REFERENCE / ADC_MAX;
+
+    return (adcVoltage - ZERO_BIAS) * INPUT_SCALE;
+}
 
 
 // =========================
@@ -104,8 +135,11 @@ connectButton.addEventListener("click", async () => {
             baudRate: 115200
         });
 
+        writer = port.writable.getWriter();
+
         connectButton.textContent =
             "Connected";
+        await sendCommand("0");
 
         readSerial();
 
@@ -119,6 +153,53 @@ connectButton.addEventListener("click", async () => {
 
 });
 
+streamButton.addEventListener("click", async () => {
+
+    streaming = !streaming;
+
+    await sendCommand(streaming ? "1" : "0");
+
+    streamButton.textContent =
+        streaming ? "Stop Sampling" : "Start Sampling";
+
+});
+
+disconnectButton.addEventListener("click", async () => {
+
+    streaming = false;
+
+    try {
+        if (writer) {
+            await sendCommand("0");
+            writer.releaseLock();
+            writer = null;
+        }
+
+        if (reader) {
+            await reader.cancel();
+        }
+
+        if (port) {
+            await port.close();
+            port = null;
+        }
+
+        connectButton.textContent = "Connect Nano";
+        streamButton.textContent = "Start Sampling";
+
+    } catch (error) {
+        console.error(error);
+    }
+
+});
+
+async function sendCommand(command) {
+    if (!writer) return;
+
+    await writer.write(
+        new TextEncoder().encode(command + "\n")
+    );
+}
 
 // =========================
 // Serial reader
@@ -140,8 +221,8 @@ async function readSerial() {
                 break;
             }
 
-            const text =
-                new TextDecoder().decode(value);
+            // const text = new TextDecoder().decode(value);
+            const text = decoder.decode(value, { stream: true });
 
             buffer += text;
 
@@ -225,7 +306,7 @@ function addSample(adc) {
 
     updateValueDisplay(adc);
 
-    captureSweep();
+    captureSweep(adc);
 
 }
 
@@ -234,70 +315,95 @@ function addSample(adc) {
 // Capture sweep
 // =========================
 
-function captureSweep() {
+// function captureSweep() {
 
-    const totalTime =
-        timeDiv * 10;
-
-
-    let samplesNeeded =
-        Math.round(totalTime);
+//     const totalTime =
+//         timeDiv * 10;
 
 
-    samplesNeeded =
-        Math.min(
-            samplesNeeded,
-            MAX_SAMPLES
-        );
+//     let samplesNeeded =
+//         Math.round(totalTime);
 
 
-    samplesNeeded =
+//     samplesNeeded =
+//         Math.min(
+//             samplesNeeded,
+//             MAX_SAMPLES
+//         );
+
+
+//     samplesNeeded =
+//         Math.max(
+//             samplesNeeded,
+//             2
+//         );
+
+
+//     /*
+//      * Don't create a new sweep until
+//      * enough samples are available.
+//      */
+
+//     if (sampleCount < samplesNeeded) {
+//         return;
+//     }
+
+
+//     /*
+//      * Copy the latest samples.
+//      */
+
+//     const newDisplay =
+//         new Array(samplesNeeded);
+
+
+//     const start =
+//         sampleIndex - samplesNeeded;
+
+
+//     for (let i = 0; i < samplesNeeded; i++) {
+
+//         const index =
+//             (start + i + MAX_SAMPLES)
+//             % MAX_SAMPLES;
+
+//         newDisplay[i] =
+//             samples[index];
+
+//     }
+
+
+//     displaySamples =
+//         newDisplay;
+
+
+//     sweepReady = true;
+
+// }
+
+function captureSweep(adc) {
+    const totalTimeMs = timeDiv * 10;
+
+    const samplesNeeded = Math.min(
         Math.max(
-            samplesNeeded,
+            Math.round((totalTimeMs / 1000) * SAMPLE_RATE),
             2
-        );
+        ),
+        MAX_SAMPLES
+    );
 
+    captureBuffer[captureCount++] = adc;
 
-    /*
-     * Don't create a new sweep until
-     * enough samples are available.
-     */
+    if (captureCount >= samplesNeeded) {
+        // Swap buffers instead of allocating a new array.
+        const temp = displaySamples;
+        displaySamples = captureBuffer;
+        captureBuffer = temp;
 
-    if (sampleCount < samplesNeeded) {
-        return;
+        displayCount = samplesNeeded;
+        captureCount = 0;
+        sweepReady = true;
     }
-
-
-    /*
-     * Copy the latest samples.
-     */
-
-    const newDisplay =
-        new Array(samplesNeeded);
-
-
-    const start =
-        sampleIndex - samplesNeeded;
-
-
-    for (let i = 0; i < samplesNeeded; i++) {
-
-        const index =
-            (start + i + MAX_SAMPLES)
-            % MAX_SAMPLES;
-
-        newDisplay[i] =
-            samples[index];
-
-    }
-
-
-    displaySamples =
-        newDisplay;
-
-
-    sweepReady = true;
-
 }
 
 
@@ -306,11 +412,9 @@ function captureSweep() {
 // =========================
 
 function resetSweep() {
-
-    displaySamples = [];
-
+    captureCount = 0;
+    displayCount = 0;
     sweepReady = false;
-
 }
 
 
@@ -320,48 +424,66 @@ function resetSweep() {
 
 let lastDisplayUpdate = 0;
 
-function updateValueDisplay(adc) {
+// function updateValueDisplay(adc) {
 
-    /*
-     * Don't update the DOM for every serial
-     * sample. DOM updates are expensive.
-     */
+//     /*
+//      * Don't update the DOM for every serial
+//      * sample. DOM updates are expensive.
+//      */
 
-    const now =
-        performance.now();
+//     const now =
+//         performance.now();
 
-    if (now - lastDisplayUpdate < 100) {
-        return;
-    }
+//     if (now - lastDisplayUpdate < 100) {
+//         return;
+//     }
 
-    lastDisplayUpdate = now;
-
-
-    const voltage =
-        adc * 5.0 / 1023.0;
+//     lastDisplayUpdate = now;
 
 
-    const averageADC =
-        sampleCount > 0
-            ? totalADC / sampleCount
-            : 0;
+//     const voltage =
+//         adc * 5.0 / 1023.0;
 
 
-    const averageVoltage =
-        averageADC * 5.0 / 1023.0;
+//     const averageADC =
+//         sampleCount > 0
+//             ? totalADC / sampleCount
+//             : 0;
 
 
-    valueDisplay.textContent =
-        `ADC: ${adc} | ` +
-        `Voltage: ${voltage.toFixed(3)} V | ` +
-        `Average: ${averageVoltage.toFixed(3)} V`;
+//     const averageVoltage =
+//         averageADC * 5.0 / 1023.0;
 
-}
+
+//     valueDisplay.textContent =
+//         `ADC: ${adc} | ` +
+//         `Voltage: ${voltage.toFixed(3)} V | ` +
+//         `Average: ${averageVoltage.toFixed(3)} V`;
+
+// }
 
 
 // =========================
 // Draw grid
 // =========================
+
+function updateValueDisplay(adc) {
+    const now = performance.now();
+
+    if (now - lastDisplayUpdate < 100) return;
+
+    lastDisplayUpdate = now;
+
+    const voltage = adcToInputVoltage(adc);
+
+    const averageADC = totalADC / sampleCount;
+    const averageVoltage = adcToInputVoltage(averageADC);
+
+    valueDisplay.textContent =
+        `ADC: ${adc} | ` +
+        `Input: ${voltage.toFixed(3)} V | ` +
+        `Average: ${averageVoltage.toFixed(3)} V`;
+}
 
 function drawGrid() {
 
@@ -474,83 +596,169 @@ function drawGrid() {
 // Draw waveform
 // =========================
 
+// function drawWaveform() {
+
+//     if (!sweepReady) {
+//         return;
+//     }
+
+
+//     if (displaySamples.length < 2) {
+//         return;
+//     }
+
+
+//     const width =
+//         canvas.width;
+
+//     const height =
+//         canvas.height;
+
+
+//     const pixelsPerDivision =
+//         height / 10;
+
+
+//     ctx.strokeStyle =
+//         "#00ff88";
+
+//     ctx.lineWidth = 2;
+
+//     ctx.beginPath();
+
+
+//     const lastIndex =
+//         displaySamples.length - 1;
+
+
+//     for (
+//         let i = 0;
+//         i < displaySamples.length;
+//         i++
+//     ) {
+
+//         const adc =
+//             displaySamples[i];
+
+
+//         const voltage =
+//             adc * 5.0 / 1023.0;
+
+
+//         const x =
+//             (i / lastIndex) * width;
+
+
+//         const y =
+//             height / 2 -
+//             (
+//                 (voltage - 2.5)
+//                 / voltsDiv
+//             ) *
+//             pixelsPerDivision;
+
+
+//         if (i === 0) {
+
+//             ctx.moveTo(x, y);
+
+//         } else {
+
+//             ctx.lineTo(x, y);
+
+//         }
+
+//     }
+
+
+//     ctx.stroke();
+
+// }
+
 function drawWaveform() {
 
-    if (!sweepReady) {
+    if (!sweepReady || displayCount < 2) {
         return;
     }
 
+    const width = canvas.width;
+    const height = canvas.height;
 
-    if (displaySamples.length < 2) {
-        return;
-    }
+    const pixelsPerDivision = height / 10;
+    const lastIndex = displayCount - 1;
 
-
-    const width =
-        canvas.width;
-
-    const height =
-        canvas.height;
-
-
-    const pixelsPerDivision =
-        height / 10;
-
-
-    ctx.strokeStyle =
-        "#00ff88";
-
+    ctx.strokeStyle = "#00ff88";
     ctx.lineWidth = 2;
-
     ctx.beginPath();
 
+    for (let i = 0; i < displayCount; i++) {
 
-    const lastIndex =
-        displaySamples.length - 1;
+        const voltage = adcToInputVoltage(displaySamples[i]);
 
-
-    for (
-        let i = 0;
-        i < displaySamples.length;
-        i++
-    ) {
-
-        const adc =
-            displaySamples[i];
-
-
-        const voltage =
-            adc * 5.0 / 1023.0;
-
-
-        const x =
-            (i / lastIndex) * width;
-
+        const x = (i / lastIndex) * width;
 
         const y =
             height / 2 -
-            (
-                (voltage - 2.5)
-                / voltsDiv
-            ) *
-            pixelsPerDivision;
-
+            (voltage / voltsDiv) * pixelsPerDivision;
 
         if (i === 0) {
-
             ctx.moveTo(x, y);
-
         } else {
-
             ctx.lineTo(x, y);
-
         }
-
     }
 
-
     ctx.stroke();
+}
 
+function calculateMeasurements() {
+
+    const count = displaySamples.length;
+
+    if (count === 0) return null;
+
+    let sum = 0;
+    let sumSquares = 0;
+
+    let min = Infinity;
+    let max = -Infinity;
+
+    for (const adc of displaySamples) {
+
+        const voltage = adcToInputVoltage(adc);
+
+        sum += voltage;
+        sumSquares += voltage * voltage;
+
+        if (voltage < min) min = voltage;
+        if (voltage > max) max = voltage;
+    }
+
+    const average = sum / count;
+
+    const rms = Math.sqrt(sumSquares / count);
+
+    return {
+        average,
+        rms,
+        min,
+        max,
+        peakToPeak: max - min
+    };
+}
+
+function updateMeasurements() {
+
+    const m = calculateMeasurements();
+
+    if (!m) return;
+
+    valueDisplay.textContent =
+        `RMS: ${m.rms.toFixed(3)} V | ` +
+        `P-P: ${m.peakToPeak.toFixed(3)} V | ` +
+        `Min: ${m.min.toFixed(3)} V | ` +
+        `Max: ${m.max.toFixed(3)} V | ` +
+        `Avg: ${m.average.toFixed(3)} V`;
 }
 
 
@@ -558,33 +766,44 @@ function drawWaveform() {
 // Draw complete scope
 // =========================
 
+// function drawScope() {
+
+//     ctx.clearRect(
+//         0,
+//         0,
+//         canvas.width,
+//         canvas.height
+//     );
+
+
+//     // Background
+
+//     ctx.fillStyle =
+//         "#050505";
+
+//     ctx.fillRect(
+//         0,
+//         0,
+//         canvas.width,
+//         canvas.height
+//     );
+
+
+//     drawGrid();
+
+//     drawWaveform();
+
+// }
+
 function drawScope() {
 
-    ctx.clearRect(
-        0,
-        0,
-        canvas.width,
-        canvas.height
-    );
-
-
-    // Background
-
-    ctx.fillStyle =
-        "#050505";
-
-    ctx.fillRect(
-        0,
-        0,
-        canvas.width,
-        canvas.height
-    );
-
+    ctx.fillStyle = "#050505";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     drawGrid();
-
     drawWaveform();
 
+    sweepReady = false;
 }
 
 
@@ -605,7 +824,7 @@ setInterval(() => {
 
         drawScope();
 
-        sweepReady = false;
+        // sweepReady = false;
 
     }
 
